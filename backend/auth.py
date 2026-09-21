@@ -42,13 +42,37 @@ _LOCAL_USER = AuthUser(id="local", email="local", is_demo=False)
 
 # ── User file helpers ─────────────────────────────────────────────────────────
 
-def _load_users() -> list[dict]:
+_users_cache_mtime: int = 0
+_users_cache_list: list[dict] = []
+_users_cache_by_email: dict[str, dict] = {}
+_users_cache_by_id: dict[str, dict] = {}
+
+def _get_cached_users() -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
+    global _users_cache_mtime, _users_cache_list, _users_cache_by_email, _users_cache_by_id
+
     if not _USERS_FILE.exists():
-        return []
+        return [], {}, {}
+
     try:
-        return json.loads(_USERS_FILE.read_text()).get("users", [])
+        current_mtime = _USERS_FILE.stat().st_mtime_ns
     except Exception:
-        return []
+        current_mtime = 0
+
+    if current_mtime == 0 or current_mtime != _users_cache_mtime:
+        try:
+            users = json.loads(_USERS_FILE.read_text()).get("users", [])
+            _users_cache_list = users
+            _users_cache_by_email = {u["email"].lower(): u for u in users if "email" in u}
+            _users_cache_by_id = {u["id"]: u for u in users if "id" in u}
+            _users_cache_mtime = current_mtime
+        except Exception:
+            return [], {}, {}
+
+    return _users_cache_list, _users_cache_by_email, _users_cache_by_id
+
+def _load_users() -> list[dict]:
+    users_list, _, _ = _get_cached_users()
+    return users_list
 
 
 def _save_users(users: list[dict]) -> None:
@@ -82,17 +106,13 @@ def _save_users_locked(users: list[dict], fh) -> None:
 
 
 def _find_user_by_email(email: str) -> dict | None:
-    for u in _load_users():
-        if u["email"].lower() == email.lower():
-            return u
-    return None
+    _, by_email, _ = _get_cached_users()
+    return by_email.get(email.lower())
 
 
 def _find_user_by_id(user_id: str) -> dict | None:
-    for u in _load_users():
-        if u["id"] == user_id:
-            return u
-    return None
+    _, _, by_id = _get_cached_users()
+    return by_id.get(user_id)
 
 
 def _update_user_field(user_id: str, field: str, value) -> None:
